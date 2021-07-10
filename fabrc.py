@@ -1,218 +1,92 @@
+import lz4.block
 import struct
 from io import BytesIO
 
-from utils import align
+from msbt.utils import align
 
-class FabResourceBase(object):
-    def __init__(self, fs):
-        self.Magic, self.Size = struct.unpack('>4si', fs.read(8))
-        self.Stream = fs
-        # print 'Read', self.Magic, 'at', hex(fs.tell()-8)
-        exec "self.__class__ = %s"%self.Magic
-        if self.Size:
-            self.__parse__()
-    
-    def __parse__(self):
-        pass
-    
-    def tobin(self):
-        pass
 
-    def save(self, fs):
-        data = self.tobin()
-        fs.write(struct.pack('>4si', self.Magic, self.Size))
-        fs.write(data)
+def makeEntry(name, *data):
+    ms = BytesIO()
+    ms.write(struct.pack('>4si', name.encode('ascii'), 0))
+    for d in data:
+        ms.write(d)
+    size = ms.tell() - 8
+    ms.seek(4, 0)
+    ms.write(struct.pack('>i', size))
+    return ms.getvalue()
 
-class FBRC(FabResourceBase):
-    def __parse__(self):
-        base = self.Stream.tell()
-        self.Desc = self.Stream.read(4)
-        read_size = 4
-        self.Members = []
-        while read_size < self.Size:
-            member = FabResourceBase(self.Stream)
-            self.Members.append(member)
-            read_size = self.Stream.tell() - base
-            if not isinstance(member, LIST):
-                exec 'self.%s = member'%(member.Magic.lower())
-            else:
-                exec 'self.%s = member'%(member.Desc.lower())
 
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(self.Desc)
-        for member in self.Members:
-            member.save(ms)
-        self.Size = ms.tell()
-        return ms.getvalue()
+def makeList(name, *entries):
+    ms = BytesIO()
+    ms.write(struct.pack('>4si4s', b'LIST', 0, name.encode('ascii')))
+    for e in entries:
+        ms.write(e)
+        ms.write(b'\x00'*(align(ms.tell(), 2)-ms.tell()))
+    size = ms.tell() - 8
+    ms.seek(4, 0)
+    ms.write(struct.pack('>i', size))
+    return ms.getvalue()
 
-class LIST(FabResourceBase):
-    def __parse__(self):
-        base = self.Stream.tell()
-        self.Desc = self.Stream.read(4)
-        read_size = 4
 
-        self.Items = []
-        while read_size < self.Size:
-            item = FabResourceBase(self.Stream)
-            self.Items.append(item)
-            al = align(self.Stream.tell(), 2)
-            self.Stream.seek(al, 1)
-            read_size = self.Stream.tell() - base
+def makeFbrc(name, *entries):
+    ms = BytesIO()
+    ms.write(struct.pack('>4si4s', b'FBRC', 0, name.encode('ascii')))
+    for e in entries:
+        ms.write(e)
+        ms.write(b'\x00'*(align(ms.tell(), 2)-ms.tell()))
+    size = ms.tell() - 8
+    ms.seek(4, 0)
+    ms.write(struct.pack('>i', size))
+    return ms.getvalue()
 
-            code = '''if hasattr(self, "{name}"):
-    if not isinstance(self.{name}, list):
-        self.{name} = [self.{name}]
-    self.{name}.append(item)
-else:
-    self.{name} = item'''.format(name=str(item.Magic).lower())
-            exec code
-    
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(self.Desc)
-        for item in self.Items:
-            item.save(ms)
-        self.Size = ms.tell()
-        return ms.getvalue()
 
-class FabBoolBase(FabResourceBase):
-    def __parse__(self):
-        self.Value = bool(struct.unpack('<i', self.Stream.read(4))[0])
-    
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(struct.pack('<i', int(self.Value)))
-        self.Size = ms.tell()
-        return ms.getvalue()
+def readEntry(stream):
+    name = stream.read(4).decode('ascii')
+    size, = struct.unpack('>i', stream.read(4))
+    data = stream.read(size)
+    stream.seek(align(stream.tell(), 2), 0)
+    return name, BytesIO(data)
 
-class FabIntBase(FabResourceBase):
-    def __parse__(self):
-        self.Value ,= struct.unpack('<i', self.Stream.read(4))
-    
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(struct.pack('<i', int(self.Value)))
-        self.Size = ms.tell()
-        return ms.getvalue()
 
-class FabStrBase(FabResourceBase):
-    def __parse__(self):
-        self.Value = self.Stream.read(self.Size)
-        al = align(self.Stream.tell(), 2)
-        self.Stream.seek(al, 1)
+def readList(stream):
+    sig = stream.read(4).decode('ascii')
+    if sig != 'LIST':
+        raise ValueError("invalid signature: "+sig)
+    size, = struct.unpack('>i', stream.read(4))
+    name = stream.read(4).decode('ascii')
+    data = stream.read(size-4)
+    stream.seek(align(stream.tell(), 2), 0)
+    return name, BytesIO(data)
 
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(self.Value)
-        self.Size = ms.tell()
-        al = align(ms.tell(), 2)
-        ms.write('\x00'*al)
-        return ms.getvalue()
 
-class BOLD(FabBoolBase):
-    pass
+def readFbrc(stream):
+    sig = stream.read(4).decode('ascii')
+    if sig != 'FBRC':
+        raise ValueError("invalid signature: "+sig)
+    size, = struct.unpack('>i', stream.read(4))
+    name = stream.read(4).decode('ascii')
+    data = stream.read(size-4)
+    stream.seek(align(stream.tell(), 2), 0)
+    return name, BytesIO(data)
 
-class ITAL(FabBoolBase):
-    pass
 
-class PACK(FabBoolBase):
-    pass
+def readUser(stream):
+    sig = stream.read(4).decode('ascii')
+    if sig != 'USER':
+        raise ValueError("invalid signature: "+sig)
+    size, = struct.unpack('>i', stream.read(4))
+    name = stream.read(4).decode('ascii')
+    data = stream.read(size-4)
+    stream.seek(align(stream.tell(), 2), 0)
+    if name == 'LZ4C':
+        uncomp_size, comp_size = struct.unpack('<ii', data[:8])
+        if uncomp_size < 0:
+            uncomp_size = ~uncomp_size + 1
+        data = lz4.block.decompress(data[8:8+comp_size], uncompressed_size=uncomp_size)
+    return name, BytesIO(data)
 
-class CNT(FabIntBase):
-    pass
 
-class ENDI(FabIntBase):
-    pass
-
-class SIZE(FabIntBase):
-    pass
-
-class LINH(FabIntBase):
-    pass
-
-class PAGS(FabIntBase):
-    pass
-
-class KCNT(FabIntBase):
-    pass
-
-class VERS(FabResourceBase):
-    def __parse__(self):
-        self.Value = struct.unpack('BBBB', self.Stream.read(4))
-    
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(struct.pack('BBBB', *self.Value))
-        self.Size = ms.tell()
-        return ms.getvalue()
-
-class PLAT(FabStrBase):
-    pass
-
-class CPLT(FabStrBase):
-    pass
-
-class GPLT(FabStrBase):
-    pass
-
-class FACE(FabStrBase):
-    pass
-
-class TXTN(FabStrBase):
-    def __parse__(self):
-        super(TXTN, self).__parse__()
-        self.page = FabResourceBase(self.Stream)
-    
-    def tobin(self):
-        ms = BytesIO()
-        ms.write(super(TXTN, self).tobin())
-        self.page.save(ms)
-        return ms.getvalue()
-
-class GLYP(FabResourceBase):
-    def __parse__(self):
-        self.CharCode, _ = struct.unpack('HH', self.Stream.read(4))
-        self.Attrs = struct.unpack('fffffffiiffffff', self.Stream.read(60))
-        self.KerningCount = FabResourceBase(self.Stream)
-        self.KerningData = FabResourceBase(self.Stream)
-    
-    def tobin(self):
-        ms = BytesIO()
-        
-        ms.write(struct.pack('HH', self.CharCode, 0))
-        ms.write(struct.pack('fffffffiiffffff', *self.Attrs))
-        self.Size = ms.tell()
-
-        self.KerningCount.save(ms)
-        self.KerningData.save(ms)
-
-        return ms.getvalue()
-
-class KERN(FabResourceBase):
-    def __parse__(self):
-        self.Data = self.Stream.read(self.Size)
-
-    def tobin(self):
-        ms = BytesIO()
-        if hasattr(self, 'Data'):
-            ms.write(self.Data)
-        self.Size = ms.tell()
-        return ms.getvalue()
-
-class TXMD(FabResourceBase):
-    def __parse__(self):
-        self.Attr = struct.unpack('i'*(self.Size/4), self.Stream.read(self.Size))
-
-class PDAT(FabResourceBase):
-    def __parse__(self):
-        self.TexData = self.Stream.read(self.Size)
-
-if __name__ == "__main__":
-    fs = open('fabfonts/nintendo.fabfnt', 'rb')
-    fbrc = FabResourceBase(fs)
-    print fbrc.Desc
-    
-    fs2 = open('test.fbrc', 'wb')
-    fbrc.save(fs2)
-    fs2.close()
+def readInt(stream):
+    name, dataStream = readEntry(stream)
+    value, = struct.unpack('<i', dataStream.read(4))
+    return name, value
