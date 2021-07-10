@@ -4,6 +4,7 @@ A script for parsing Fab Resource *(What is Fab?)* found in Pokemon Pokémon Art
 # Requirements
 * python 3
 * python-fire
+* python-lz4
 
 # Usage
 ## fabfnt.py
