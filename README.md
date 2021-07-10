@@ -11,14 +11,14 @@ You can generate a *.fabfnt file and the corresponding font image(s) with this s
 ``` shell
 fabfnt.py FONTNAME CHARSET_PATH CHARSET_ENCODING FACEPATH SIZE SAVEDIR BASELINE [IMAGEGLYPHS]...
 ```
-FONTNAME: The internal name of the generated font file.
-CHARSET_PATH: Path to the charset file which you want to included in the generated font.
-CHARSET_ENCODING: Charset file encoding.
-FACEPATH: Font file path (*.ttf, *.ttc, etc.).
-SIZE: Font pixel size.
-SAVEDIR: Where the output files being saved to.
-BASELINE: Baseline position.
-[IMAGEGLYPHS]...: Special glyphs, such as button icons. The file name should be the glyph's charcode in decimal.
+* FONTNAME: The internal name of the generated font file.
+* CHARSET_PATH: Path to the charset file which you want to included in the generated font.
+* CHARSET_ENCODING: Charset file encoding.
+* FACEPATH: Font file path (*.ttf, *.ttc, etc.).
+* SIZE: Font pixel size.
+* SAVEDIR: Where the output files being saved to.
+* BASELINE: Baseline position.
+* [IMAGEGLYPHS]...: Special glyphs, such as button icons. The file name should be the glyph's charcode in decimal.
 
 ## fabndl.py
 ### Pack a folder to a fab resource bundle
